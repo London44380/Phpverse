@@ -225,6 +225,7 @@ def fetch(host, port, tls, vhost, path, timeout, method="GET"):
 
 def fetch_follow(host, port, tls, vhost, path, timeout, hops=3):
     """GET with a few same-host redirects (http->https, www, trailing slash)."""
+    base = vhost.lower().removeprefix("www.")
     for _ in range(hops + 1):
         res = fetch(host, port, tls, vhost, path, timeout)
         if not res:
@@ -235,6 +236,10 @@ def fetch_follow(host, port, tls, vhost, path, timeout, hops=3):
             return res, (host, port, tls, vhost)
         u = urlparse(loc if "://" in loc else f"//{vhost}{loc}", "http")
         nh = u.hostname or vhost
+        # Stay in scope: only same host (or its www. variant), http/https.
+        if (u.scheme not in ("http", "https")
+                or nh.lower().removeprefix("www.") != base):
+            return res, (host, port, tls, vhost)
         ntls = u.scheme == "https"
         nport = u.port or (443 if ntls else 80)
         try:
@@ -671,10 +676,16 @@ def _probe_egg(ev, ctx, timeout):
 CONF_COL = {"high": "GREEN", "medium": "YELLOW", "low": "GREY"}
 
 
+def clean(s):
+    """Neutralise control characters (ANSI escapes...) from server data."""
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in str(s))
+
+
 def print_report(name, ip, ev):
+    name, ip = clean(name), clean(ip)
     head = name if name == ip else f"{name} ({ip})"
     print(f"{C.BOLD}{C.CYAN}▸ {head}{C.RESET}"
-          f"  {C.GREY}{getattr(ev, 'landing', '')}{C.RESET}")
+          f"  {C.GREY}{clean(getattr(ev, 'landing', ''))}{C.RESET}")
     if not ev.detected:
         print(f"  {C.GREY}no PHP signal found — not PHP, or fully hidden "
               f"(expose_php off, headers stripped, clean URLs){C.RESET}\n")
@@ -684,17 +695,17 @@ def print_report(name, ip, ev):
         guess = (f" {C.ORANGE}(inferred from distro stack — low confidence)"
                  f"{C.RESET}" if ev.best_conf() == "low" else "")
         print(f"  {C.GREEN}{C.BOLD}PHP detected{C.RESET} · version "
-              f"{C.BOLD}{ver}{C.RESET}{guess}")
+              f"{C.BOLD}{clean(ver)}{C.RESET}{guess}")
         others = [v for v in ev.versions() if v != ver]
         if others:
             print(f"  {C.GREY}other version strings seen: "
-                  f"{', '.join(others)}{C.RESET}")
+                  f"{clean(', '.join(others))}{C.RESET}")
     else:
         print(f"  {C.GREEN}{C.BOLD}PHP detected{C.RESET} · "
               f"{C.ORANGE}version not exposed{C.RESET}")
     for signal, detail, v, conf in ev.items:
         col = getattr(C, CONF_COL[conf])
-        print(f"    {col}{conf:<6}{C.RESET} {C.GREY}{signal:<15}{C.RESET} {detail}")
+        print(f"    {col}{conf:<6}{C.RESET} {C.GREY}{signal:<15}{C.RESET} {clean(detail)}")
     findings = list(ev.findings)
     if ver:
         findings = version_findings(ver, ev.packaged, ev.windows) + findings
@@ -703,7 +714,7 @@ def print_report(name, ip, ev):
                                  "(expose_php=Off / headers stripped)"))
     order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
     for level, note in sorted(findings, key=lambda x: order[x[0]]):
-        print(f"      {sev(level, note)}")
+        print(f"      {sev(level, clean(note))}")
     print()
 
 
